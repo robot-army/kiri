@@ -210,8 +210,12 @@ function reset_commits_selection()
     for (i = 0; i < commits.length; i++) {
         $("#commits_form input:checkbox[name='commit']")[i].checked = false;
     }
-    for (i = 0; i < 2; i++) {
-        $("#commits_form input:checkbox[name='commit']")[i].checked = true;
+    if (commits.length >= 2) {
+        $("#commits_form input:checkbox[name='commit']")[commits.length - 2].checked = true;
+        $("#commits_form input:checkbox[name='commit']")[commits.length - 1].checked = true;
+    }
+    else if (commits.length == 1) {
+        $("#commits_form input:checkbox[name='commit']")[0].checked = true;
     }
 
     // reset visibility of the diff images
@@ -563,11 +567,13 @@ function update_commits() {
 
     var commits = $("#commits_form input:checkbox[name='commit']");
     var hashes = [];
+    var selected_indices = [];
 
     for (var i = 0; i < commits.length; i++) {
         if (commits[i].checked) {
             var value = commits[i].value;
             hashes.push(value);
+            selected_indices.push(i);
         }
     }
 
@@ -576,9 +582,12 @@ function update_commits() {
         return;
     }
 
-    // Update selected commits
-    commit1 = hashes[0].replace(/\s+/g, '');
-    commit2 = hashes[1].replace(/\s+/g, '');
+    // Update selected commits (commit1=newest, commit2=oldest)
+    var newer_idx = Math.max(selected_indices[0], selected_indices[1]);
+    var older_idx = Math.min(selected_indices[0], selected_indices[1]);
+
+    commit1 = commits[newer_idx].value.replace(/\s+/g, '');
+    commit2 = commits[older_idx].value.replace(/\s+/g, '');
 
     console.log("commit1:", commit1);
     console.log("commit2:", commit2);
@@ -1943,10 +1952,10 @@ function select_initial_commits()
 
     if (commits.length >= 2)
     {
-        commit1 = commits[0].value;
-        commit2 = commits[1].value;
-        commits[0].checked = true;
-        commits[1].checked = true;
+        commit1 = commits[commits.length - 1].value;
+        commit2 = commits[commits.length - 2].value;
+        commits[commits.length - 2].checked = true;
+        commits[commits.length - 1].checked = true;
     }
     else if (commits.length == 1)
     {
