@@ -8,6 +8,9 @@ var old_view;
 var current_view;
 
 current_diff_filter = "diff" // diff or normal
+var zoom_filter_restore_timer = null;
+var zoom_filters_suspended = false;
+var last_transform_zoom = null;
 
 var panZoom_instance = null;
 var lastEventListener = null;
@@ -240,8 +243,7 @@ function reset_commits_selection()
     $("#commit3_legend_fs").css('visibility', 'visible');
     $("#commit3_legend_text_fs").css('visibility', 'visible');
 
-    $("#diff-xlink-1").css('filter', 'url(#filter-1)') /// FILTER_DEFAULT
-    $("#diff-xlink-2").css('filter', 'url(#filter-2)') /// FILTER_DEFAULT
+    apply_diff_filters_for_visibility();
 
     update_commits();
 }
@@ -255,6 +257,48 @@ function toggle_sch_pcb_view() {
         show_sch();
     }
     update_commits();
+}
+
+function apply_diff_filters_for_visibility()
+{
+    var old_hidden = $("#diff-xlink-1").css('visibility') === "hidden";
+    var new_hidden = $("#diff-xlink-2").css('visibility') === "hidden";
+
+    if (old_hidden && !new_hidden)
+    {
+        $("#diff-xlink-1").css('filter', 'url(#filter-1)');
+        $("#diff-xlink-2").css('filter', 'url(#filter-22)');
+    }
+    else if (new_hidden && !old_hidden)
+    {
+        $("#diff-xlink-1").css('filter', 'url(#filter-12)');
+        $("#diff-xlink-2").css('filter', 'url(#filter-2)');
+    }
+    else
+    {
+        $("#diff-xlink-1").css('filter', 'url(#filter-1)');
+        $("#diff-xlink-2").css('filter', 'url(#filter-2)');
+    }
+}
+
+function suspend_diff_filters_while_zooming()
+{
+    if (!zoom_filters_suspended)
+    {
+        zoom_filters_suspended = true;
+        $("#diff-xlink-1").css('filter', 'none');
+        $("#diff-xlink-2").css('filter', 'none');
+    }
+
+    if (zoom_filter_restore_timer) {
+        clearTimeout(zoom_filter_restore_timer);
+    }
+
+    zoom_filter_restore_timer = setTimeout(function() {
+        zoom_filters_suspended = false;
+        apply_diff_filters_for_visibility();
+        zoom_filter_restore_timer = null;
+    }, 120);
 }
 
 function toggle_old_commit_visibility()
@@ -292,7 +336,6 @@ function toggle_old_commit_visibility()
     if ($("#diff-xlink-1").css('visibility') === "hidden")
     {
         $("#diff-xlink-2").css('visibility', 'visible')
-        $("#diff-xlink-2").css('filter', 'url(#filter-22)') /// FILTER_WHITE
         $("#commit2_legend").css('visibility', 'visible');
         $("#commit2_legend_text").css('visibility', 'visible');
         $("#commit2_legend_fs").css('visibility', 'visible');
@@ -303,14 +346,13 @@ function toggle_old_commit_visibility()
     }
     else
     {
-        $("#diff-xlink-1").css('filter', 'url(#filter-1)') /// FILTER_DEFAULT
-        $("#diff-xlink-2").css('filter', 'url(#filter-2)') /// FILTER_DEFAULT
-
         $("#commit1_legend").css('color', '#00FFFF');
         $("#commit1_legend_fs").css('color', '#00FFFF');
         $("#commit2_legend").css('color', '#880808');
         $("#commit2_legend_fs").css('color', '#880808');
     }
+
+    apply_diff_filters_for_visibility();
 }
 
 function toggle_new_commit_visibility()
@@ -348,7 +390,6 @@ function toggle_new_commit_visibility()
     if ($("#diff-xlink-2").css('visibility') === "hidden")
     {
         $("#diff-xlink-1").css('visibility', 'visible')
-        $("#diff-xlink-1").css('filter', 'url(#filter-12)') /// FILTER_WHITE
         $("#commit1_legend").css('visibility', 'visible');
         $("#commit1_legend_text").css('visibility', 'visible');
         $("#commit1_legend_fs").css('visibility', 'visible');
@@ -359,14 +400,13 @@ function toggle_new_commit_visibility()
     }
     else
     {
-        $("#diff-xlink-1").css('filter', 'url(#filter-1)') /// FILTER_DEFAULT
-        $("#diff-xlink-2").css('filter', 'url(#filter-2)') /// FILTER_DEFAULT
-
         $("#commit1_legend").css('color', '#00FFFF');
         $("#commit1_legend_fs").css('color', '#00FFFF');
         $("#commit2_legend").css('color', '#880808');
         $("#commit2_legend_fs").css('color', '#880808');
     }
+
+    apply_diff_filters_for_visibility();
 }
 
 function select_next_sch_or_pcb(cycle = false) {
@@ -457,11 +497,13 @@ function svg_fit_center()
 
 function svg_zoom_in()
 {
+    suspend_diff_filters_while_zooming();
     panZoom_instance.zoomIn();
 }
 
 function svg_zoom_out()
 {
+    suspend_diff_filters_while_zooming();
     panZoom_instance.zoomOut();
 }
 
@@ -2255,6 +2297,14 @@ function createNewEmbed(src1, src2)
         viewportSelector: '.my_svg-pan-zoom_viewport',
         eventsListenerElement: document.querySelector(svgpanzoom_selector),
         onUpdatedCTM: function() {
+            var zoom_now = panZoom_instance ? panZoom_instance.getZoom() : null;
+            if (zoom_now !== null && last_transform_zoom !== null) {
+                if (Math.abs(zoom_now - last_transform_zoom) > 0.0001) {
+                    suspend_diff_filters_while_zooming();
+                }
+            }
+            last_transform_zoom = zoom_now;
+
             if (current_view == "show_sch") {
                 if (sch_current_zoom != sch_old_zoom) {
                     console.log(">> Restoring SCH pan and zoom");
@@ -2275,19 +2325,20 @@ function createNewEmbed(src1, src2)
     });
 
     console.log("panZoom_instance:", panZoom_instance);
+    last_transform_zoom = panZoom_instance.getZoom();
 
     embed.addEventListener('load', lastEventListener);
 
     document.getElementById('zoom-in').addEventListener('click', function(ev) {
         ev.preventDefault();
+        suspend_diff_filters_while_zooming();
         panZoom_instance.zoomIn();
-        panZoom_instance.center();
     });
 
     document.getElementById('zoom-out').addEventListener('click', function(ev) {
         ev.preventDefault();
+        suspend_diff_filters_while_zooming();
         panZoom_instance.zoomOut();
-        panZoom_instance.center();
     });
 
     document.getElementById('zoom-fit').addEventListener('click', function(ev) {
@@ -2296,16 +2347,7 @@ function createNewEmbed(src1, src2)
         panZoom_instance.center();
     });
 
-    if (current_diff_filter === "diff")
-    {
-        $("#diff-xlink-1").css('filter', 'url(#filter-1)') /// FILTER_DIFF
-        $("#diff-xlink-2").css('filter', 'url(#filter-2)') /// FILTER_DIFF
-    }
-    else
-    {
-        $("#diff-xlink-1").css('filter', 'url(#filter-12)') /// FILTER_WHITE
-        $("#diff-xlink-2").css('filter', 'url(#filter-22)') /// FILTER_WHITE
-    }
+    apply_diff_filters_for_visibility();
 
     return embed;
 }
