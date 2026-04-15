@@ -33,6 +33,10 @@ var netdiff_current_entries = [];
 var netdiff_active_entry_index = -1;
 var netdiff_commit1_snapshot = null;
 var netdiff_commit2_snapshot = null;
+var netdiff_sheet_rename_badges = {};
+
+var NETDIFF_COMMIT1_COLOR = '#00FFFF';
+var NETDIFF_COMMIT2_COLOR = '#FF7070';
 
 var is_fullscreen = false;
 
@@ -833,6 +837,10 @@ function changed_pages_for_entry(entry, preferred_snapshot, fallback_snapshot) {
 }
 
 function primary_page_for_entry(entry, preferred_snapshot, fallback_snapshot) {
+    if (entry && entry.type === "sheet_rename") {
+        return entry.page_id || null;
+    }
+
     var changed_pages = changed_pages_for_entry(entry, preferred_snapshot, fallback_snapshot);
     if (changed_pages.length) {
         return changed_pages[0];
@@ -907,6 +915,100 @@ function changed_net_metadata(entry) {
         member_delta_preview(entry, 4),
         `<span class="netdiff-unchanged">net spans ${net_pages.length} page${net_pages.length === 1 ? "" : "s"}</span>`
     ].join("<br>");
+}
+
+function detect_sheet_renames(renamed_items) {
+    var groups = {};
+    var non_sheet = [];
+
+    for (const item of renamed_items) {
+        var na = item.net_name_a;
+        var nb = item.net_name_b;
+
+        var slash_a = na.lastIndexOf('/');
+        var slash_b = nb.lastIndexOf('/');
+
+        if (slash_a <= 0 || slash_b <= 0) {
+            non_sheet.push(item);
+            continue;
+        }
+
+        var prefix_a = na.substring(0, slash_a);
+        var prefix_b = nb.substring(0, slash_b);
+        var local_a = na.substring(slash_a + 1);
+        var local_b = nb.substring(slash_b + 1);
+
+        if (local_a !== local_b || prefix_a === prefix_b) {
+            non_sheet.push(item);
+            continue;
+        }
+
+        var group_key = prefix_a + "||" + prefix_b;
+        if (!groups[group_key]) {
+            groups[group_key] = { prefix_a: prefix_a, prefix_b: prefix_b, items: [] };
+        }
+        groups[group_key].items.push(item);
+    }
+
+    var sheet_renames = [];
+
+    for (const group_key of Object.keys(groups)) {
+        var group = groups[group_key];
+        var items = group.items;
+
+        var all_refs_a = [];
+        var all_refs_b = [];
+        var page_id = null;
+
+        for (const item of items) {
+            for (const ref of (item.refs_a || [])) {
+                if (!all_refs_a.includes(ref)) { all_refs_a.push(ref); }
+            }
+            for (const ref of (item.refs_b || [])) {
+                if (!all_refs_b.includes(ref)) { all_refs_b.push(ref); }
+            }
+            if (!page_id) {
+                for (const m of (item.members_b || []).concat(item.members_a || [])) {
+                    if (m && m.page) { page_id = m.page; break; }
+                }
+            }
+        }
+
+        var parts_a = group.prefix_a.split('/').filter(function(s) { return s.length > 0; });
+        var parts_b = group.prefix_b.split('/').filter(function(s) { return s.length > 0; });
+        var sheet_name_a = parts_a.length ? parts_a[parts_a.length - 1] : group.prefix_a;
+        var sheet_name_b = parts_b.length ? parts_b[parts_b.length - 1] : group.prefix_b;
+
+        sheet_renames.push({
+            type: "sheet_rename",
+            prefix_a: group.prefix_a,
+            prefix_b: group.prefix_b,
+            sheet_name_a: sheet_name_a,
+            sheet_name_b: sheet_name_b,
+            page_id: page_id,
+            net_count: items.length,
+            nets: items,
+            refs_a: all_refs_a,
+            refs_b: all_refs_b
+        });
+    }
+
+    return { sheet_renames: sheet_renames, remaining: non_sheet };
+}
+
+function apply_netdiff_page_annotations() {
+    for (const page_id of Object.keys(netdiff_sheet_rename_badges)) {
+        var label = document.getElementById("label-" + page_id);
+        if (!label) { continue; }
+
+        var existing = label.querySelector(".netdiff-sheet-rename-badge");
+        if (existing) { existing.remove(); }
+
+        var badge_html = netdiff_sheet_rename_badges[page_id];
+        if (badge_html) {
+            label.insertAdjacentHTML("beforeend", badge_html);
+        }
+    }
 }
 
 function compare_netdiff_snapshots(snapshot_a, snapshot_b) {
@@ -999,9 +1101,12 @@ function compare_netdiff_snapshots(snapshot_a, snapshot_b) {
         });
     }
 
+    var sheet_rename_result = detect_sheet_renames(renamed);
+
     return {
         changed: changed,
-        renamed: renamed,
+        renamed: sheet_rename_result.remaining,
+        sheet_renames: sheet_rename_result.sheet_renames,
         only_a: only_in_a,
         only_b: only_in_b
     };
@@ -1043,7 +1148,7 @@ function html_escape(text) {
         .replaceAll("'", "&#39;");
 }
 
-function render_netdiff_items(group_title, items, start_index, name_builder, refs_builder, metadata_builder) {
+function render_netdiff_items(group_title, items, start_index, name_builder, refs_builder, metadata_builder, name_html_builder) {
     if (!items || items.length === 0) {
         return { html: "", next_index: start_index };
     }
@@ -1064,9 +1169,11 @@ function render_netdiff_items(group_title, items, start_index, name_builder, ref
             metadata = html_escape(refs_preview + refs_suffix);
         }
 
+        var name_html = name_html_builder ? name_html_builder(item) : html_escape(name_builder(item));
+
         html += `
             <button id="netdiff-item-${index}" type="button" class="netdiff-item" onclick="focus_netdiff_entry(${index})">
-                <div>${html_escape(name_builder(item))}</div>
+                <div>${name_html}</div>
                 <div class="netdiff-metadata">${metadata}</div>
             </button>
         `;
@@ -1129,6 +1236,18 @@ function update_netdiff_panel() {
     html += changed_render.html;
     idx = changed_render.next_index;
 
+    var sheet_renames_render = render_netdiff_items(
+        "Sheet renames",
+        result.sheet_renames || [],
+        idx,
+        (item) => item.sheet_name_a + " → " + item.sheet_name_b,
+        (item) => netdiff_refs_for_entry(item),
+        (item) => `<span class="netdiff-unchanged">${item.net_count} nets · ${html_escape(item.page_id || '?')}</span>`,
+        (item) => `<span class="netdiff-commit1-color">${html_escape(item.sheet_name_a)}</span> <span class="netdiff-unchanged">→</span> <span class="netdiff-commit2-color">${html_escape(item.sheet_name_b)}</span>`
+    );
+    html += sheet_renames_render.html;
+    idx = sheet_renames_render.next_index;
+
     var renamed_render = render_netdiff_items(
         "Renamed nets",
         result.renamed,
@@ -1164,6 +1283,20 @@ function update_netdiff_panel() {
     }
 
     panel.innerHTML = html;
+
+    // Build page-label badges for sheet renames
+    netdiff_sheet_rename_badges = {};
+    for (const entry of (result.sheet_renames || [])) {
+        if (entry.page_id) {
+            netdiff_sheet_rename_badges[entry.page_id] =
+                `<span class="netdiff-sheet-rename-badge">` +
+                `<span style="color:${NETDIFF_COMMIT1_COLOR}">${html_escape(entry.sheet_name_a)}</span>` +
+                ` → ` +
+                `<span style="color:${NETDIFF_COMMIT2_COLOR}">${html_escape(entry.sheet_name_b)}</span>` +
+                `</span>`;
+        }
+    }
+    apply_netdiff_page_annotations();
 }
 
 function page_for_ref(ref, preferred_snapshot, fallback_snapshot) {
@@ -1258,18 +1391,28 @@ function focus_netdiff_entry(entry_index) {
     var focus = document.getElementById("netdiff_focus");
     if (focus) {
         var name;
+        var name_html;
         if (entry.type === "renamed") {
             name = entry.net_name_a + " → " + entry.net_name_b;
+            name_html = html_escape(name);
+        }
+        else if (entry.type === "sheet_rename") {
+            name = entry.sheet_name_a + " → " + entry.sheet_name_b;
+            name_html = `<span class="netdiff-commit1-color">${html_escape(entry.sheet_name_a)}</span> → <span class="netdiff-commit2-color">${html_escape(entry.sheet_name_b)}</span>`;
         }
         else {
             name = entry.net_name;
+            name_html = html_escape(name);
         }
 
         var location_text = page_id ? ("Jumped to: " + page_id) : "Jumped to: not resolved";
         var refs_text = refs.length ? refs.join(", ") : "(none)";
 
         var delta_details = "";
-        if (entry.type === "changed") {
+        if (entry.type === "sheet_rename") {
+            delta_details = `<div><span class="netdiff-unchanged">${entry.net_count} nets collapsed — all signals in sheet renamed</span></div>`;
+        }
+        else if (entry.type === "changed") {
             var removed = (entry.removed_members || []).slice(0, 12).map((m) => `<span class="netdiff-removed">-${html_escape(format_member(m))}</span>`).join(", ");
             var added = (entry.added_members || []).slice(0, 12).map((m) => `<span class="netdiff-added">+${html_escape(format_member(m))}</span>`).join(", ");
 
@@ -1285,7 +1428,7 @@ function focus_netdiff_entry(entry_index) {
         }
 
         focus.innerHTML = `
-            <div><strong>${html_escape(name)}</strong></div>
+            <div><strong>${name_html}</strong></div>
             <div>${html_escape(location_text)}</div>
             <div>Net spans: ${html_escape(format_page_list(net_pages, 8))}</div>
             ${delta_details}
@@ -1465,6 +1608,9 @@ function update_sheets_list(commit1, commit2) {
     // Update list of pages
     sheets_element = document.getElementById("pages_list_form");
     sheets_element.innerHTML = form_inputs_html.replace("undefined", "");
+
+    // Re-apply sheet rename badges after list rebuild
+    apply_netdiff_page_annotations();
 
     // rerun tooltips since they are getting ugly.
     $('[data-toggle="tooltip"]').tooltip({html: true});

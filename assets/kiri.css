@@ -403,6 +403,28 @@ a:active {
 	color: #a8a8a8;
 }
 
+.netdiff-commit1-color {
+	color: #00FFFF;
+	font-weight: 600;
+}
+
+.netdiff-commit2-color {
+	color: #FF7070;
+	font-weight: 600;
+}
+
+.netdiff-sheet-rename-badge {
+	font-size: 0.68em;
+	padding: 1px 5px;
+	border-radius: 3px;
+	margin-left: 5px;
+	background: rgba(255, 255, 255, 0.07);
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	vertical-align: middle;
+	display: inline-block;
+	pointer-events: none;
+}
+
 .page-highlight-pulse {
 	animation: page-highlight-pulse 1.4s ease-in-out 1;
 	border: 1px solid #28a745 !important;
