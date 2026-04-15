@@ -46,7 +46,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install sexpdata
           sudo apt-get update
-          sudo apt-get install -y kicad
+          sudo apt-get install -y kicad dos2unix
           npx -y playwright@1.53.2 install --with-deps chromium
 
       - name: Clone fixture project
