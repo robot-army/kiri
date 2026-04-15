@@ -41,6 +41,26 @@ Command line flags can be seen using the `-h` flag
 kiri -h
 ```
 
+## Testing and CI
+
+KiRI now includes two CI workflows:
+
+- Fast CI for every push/PR: [ci-fast.yml](.github/workflows/ci-fast.yml)
+    - Python netdiff integration tests
+    - Python syntax check for `kiri-netdiff-snapshot`
+    - Shell syntax checks and `shellcheck` for new wrapper scripts
+- Manual KiCad E2E workflow: [kicad-e2e.yml](.github/workflows/kicad-e2e.yml)
+    - Clones a fixture project
+    - Runs KiRI end-to-end
+    - Uploads generated artifacts for inspection
+
+Run fast tests locally:
+
+```bash
+python tests/netdiff_integration/test_netdiff_integration.py
+python tests/netdiff_integration/test_netdiff_sheet_rename.py
+```
+
 ### Archiving generated files
 
 There is a possibility to archive generated files (check the help above).
