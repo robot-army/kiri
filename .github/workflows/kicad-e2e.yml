@@ -46,8 +46,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install sexpdata
           sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository --yes ppa:kicad/kicad-9.0-releases
+          sudo apt-get update
           sudo apt-get install -y kicad dos2unix
           npx -y playwright@1.53.2 install --with-deps chromium
+
+      - name: Show tool versions
+        run: |
+          python --version
+          node --version
+          npm --version
+          kicad-cli --version
+          dos2unix --version | head -n 1
 
       - name: Clone fixture project
         run: |
@@ -74,9 +85,10 @@ jobs:
       - name: Run KiRI against fixture
         run: |
           cd /tmp/kiri-fixture
+          export TERM=xterm
           export PATH="$GITHUB_WORKSPACE/bin:$GITHUB_WORKSPACE/submodules/KiCad-Diff/bin:$PATH"
           export PYTHONPATH="$GITHUB_WORKSPACE:$PYTHONPATH"
-          "$GITHUB_WORKSPACE/bin/kiri" led-panel.kicad_pro -g "${{ steps.commits.outputs.oldest }}..${{ steps.commits.outputs.newest }}" -l -r -d .kiri-ci -V
+          "$GITHUB_WORKSPACE/bin/kiri" led-panel.kicad_pro -g "${{ steps.commits.outputs.oldest }}..${{ steps.commits.outputs.newest }}" -l -r -k -d .kiri-ci -V
 
       - name: Validate generated artifacts
         run: |
