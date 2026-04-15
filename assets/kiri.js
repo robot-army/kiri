@@ -27,6 +27,13 @@ pcb_current_pan = null;
 // Variables updated by Kiri
 var selected_view = "schematic";
 
+var netdiff_snapshots_cache = {};
+var netdiff_entries_cache = {};
+var netdiff_current_entries = [];
+var netdiff_active_entry_index = -1;
+var netdiff_commit1_snapshot = null;
+var netdiff_commit2_snapshot = null;
+
 var is_fullscreen = false;
 
 // =======================================
@@ -606,6 +613,8 @@ function update_commits() {
     } else {
         update_layer();
     }
+
+    update_netdiff_panel();
 }
 
 function loadFile(filePath) {
@@ -620,6 +629,440 @@ function loadFile(filePath) {
         result = xmlhttp.responseText;
     }
     return result;
+}
+
+function loadJsonFile(filePath) {
+    var text = loadFile(filePath);
+    if (text === null || text === "") {
+        return null;
+    }
+
+    try {
+        return JSON.parse(text);
+    }
+    catch (error) {
+        console.log("Failed to parse JSON:", filePath, error);
+        return null;
+    }
+}
+
+function get_netdiff_snapshot(commit_hash) {
+    if (!commit_hash) {
+        return null;
+    }
+
+    if (netdiff_snapshots_cache[commit_hash]) {
+        return netdiff_snapshots_cache[commit_hash];
+    }
+
+    var snapshot_path = "../" + commit_hash + "/_KIRI_/netdiff_snapshot.json" + url_timestamp(commit_hash);
+    var snapshot = loadJsonFile(snapshot_path);
+
+    if (snapshot) {
+        netdiff_snapshots_cache[commit_hash] = snapshot;
+    }
+
+    return snapshot;
+}
+
+function normalize_members(members) {
+    if (!Array.isArray(members)) {
+        return [];
+    }
+
+    return members
+        .map((member) => {
+            var ref = member && member.ref ? member.ref : "";
+            var pin = member && member.pin ? member.pin : "";
+            return ref + "|" + pin;
+        })
+        .sort();
+}
+
+function member_sets_equal(members_a, members_b) {
+    var a = normalize_members(members_a);
+    var b = normalize_members(members_b);
+
+    if (a.length !== b.length) {
+        return false;
+    }
+
+    for (var i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function refs_from_members(members) {
+    if (!Array.isArray(members)) {
+        return [];
+    }
+
+    var refs = [];
+    for (const member of members) {
+        if (member && member.ref && !refs.includes(member.ref)) {
+            refs.push(member.ref);
+        }
+    }
+    return refs;
+}
+
+function compare_netdiff_snapshots(snapshot_a, snapshot_b) {
+    var nets_a = (snapshot_a && snapshot_a.nets) ? snapshot_a.nets : {};
+    var nets_b = (snapshot_b && snapshot_b.nets) ? snapshot_b.nets : {};
+
+    var keys_a = Object.keys(nets_a);
+    var keys_b = Object.keys(nets_b);
+    var set_a = new Set(keys_a);
+    var set_b = new Set(keys_b);
+
+    var both = keys_a.filter((k) => set_b.has(k)).sort();
+    var only_a = keys_a.filter((k) => !set_b.has(k)).sort();
+    var only_b = keys_b.filter((k) => !set_a.has(k)).sort();
+
+    var changed = [];
+    for (const net_name of both) {
+        if (!member_sets_equal(nets_a[net_name], nets_b[net_name])) {
+            changed.push({
+                type: "changed",
+                net_name: net_name,
+                members_a: nets_a[net_name],
+                members_b: nets_b[net_name],
+                refs_a: refs_from_members(nets_a[net_name]),
+                refs_b: refs_from_members(nets_b[net_name])
+            });
+        }
+    }
+
+    var renamed = [];
+    var consumed_a = new Set();
+    var consumed_b = new Set();
+
+    for (const name_a of only_a) {
+        if (consumed_a.has(name_a)) {
+            continue;
+        }
+
+        for (const name_b of only_b) {
+            if (consumed_b.has(name_b)) {
+                continue;
+            }
+
+            if (member_sets_equal(nets_a[name_a], nets_b[name_b])) {
+                renamed.push({
+                    type: "renamed",
+                    net_name_a: name_a,
+                    net_name_b: name_b,
+                    members_a: nets_a[name_a],
+                    members_b: nets_b[name_b],
+                    refs_a: refs_from_members(nets_a[name_a]),
+                    refs_b: refs_from_members(nets_b[name_b])
+                });
+                consumed_a.add(name_a);
+                consumed_b.add(name_b);
+                break;
+            }
+        }
+    }
+
+    var only_in_a = [];
+    for (const name_a of only_a) {
+        if (consumed_a.has(name_a)) {
+            continue;
+        }
+
+        only_in_a.push({
+            type: "only_a",
+            net_name: name_a,
+            members_a: nets_a[name_a],
+            refs_a: refs_from_members(nets_a[name_a])
+        });
+    }
+
+    var only_in_b = [];
+    for (const name_b of only_b) {
+        if (consumed_b.has(name_b)) {
+            continue;
+        }
+
+        only_in_b.push({
+            type: "only_b",
+            net_name: name_b,
+            members_b: nets_b[name_b],
+            refs_b: refs_from_members(nets_b[name_b])
+        });
+    }
+
+    return {
+        changed: changed,
+        renamed: renamed,
+        only_a: only_in_a,
+        only_b: only_in_b
+    };
+}
+
+function netdiff_refs_for_entry(entry) {
+    if (!entry) {
+        return [];
+    }
+
+    var refs = [];
+    var refs_a = entry.refs_a || [];
+    var refs_b = entry.refs_b || [];
+
+    for (const ref of refs_b) {
+        if (!refs.includes(ref)) {
+            refs.push(ref);
+        }
+    }
+    for (const ref of refs_a) {
+        if (!refs.includes(ref)) {
+            refs.push(ref);
+        }
+    }
+
+    return refs;
+}
+
+function html_escape(text) {
+    if (text === undefined || text === null) {
+        return "";
+    }
+
+    return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+function render_netdiff_items(group_title, items, start_index, name_builder, refs_builder) {
+    if (!items || items.length === 0) {
+        return { html: "", next_index: start_index };
+    }
+
+    var html = "";
+    html += `<div class="netdiff-group-title">${group_title} (${items.length})</div>`;
+
+    var index = start_index;
+    for (const item of items) {
+        var refs = refs_builder(item);
+        var refs_preview = refs.length ? refs.slice(0, 5).join(", ") : "(no refs)";
+        var refs_suffix = refs.length > 5 ? ` +${refs.length - 5}` : "";
+
+        html += `
+            <button id="netdiff-item-${index}" type="button" class="netdiff-item" onclick="focus_netdiff_entry(${index})">
+                <div>${html_escape(name_builder(item))}</div>
+                <div class="netdiff-metadata">${html_escape(refs_preview + refs_suffix)}</div>
+            </button>
+        `;
+
+        netdiff_current_entries.push(item);
+        index += 1;
+    }
+
+    return { html: html, next_index: index };
+}
+
+function update_netdiff_panel() {
+    var panel = document.getElementById("netdiff_list_content");
+    var focus = document.getElementById("netdiff_focus");
+
+    if (!panel || !focus) {
+        return;
+    }
+
+    focus.style.display = "none";
+    focus.innerHTML = "";
+
+    if (!commit1 || !commit2) {
+        panel.innerHTML = '<small class="text-muted">Select two commits to load netlist diff.</small>';
+        return;
+    }
+
+    var cache_key = commit1 + "::" + commit2;
+    var result = netdiff_entries_cache[cache_key];
+
+    netdiff_commit1_snapshot = get_netdiff_snapshot(commit1);
+    netdiff_commit2_snapshot = get_netdiff_snapshot(commit2);
+
+    if (!netdiff_commit1_snapshot || !netdiff_commit2_snapshot) {
+        panel.innerHTML = '<small class="text-warning">Netlist snapshot unavailable for one or both commits.</small>';
+        return;
+    }
+
+    if (!result) {
+        result = compare_netdiff_snapshots(netdiff_commit1_snapshot, netdiff_commit2_snapshot);
+        netdiff_entries_cache[cache_key] = result;
+    }
+
+    netdiff_current_entries = [];
+    netdiff_active_entry_index = -1;
+
+    var html = "";
+    html += `<div class="netdiff-metadata" style="margin-bottom: 8px;">${html_escape(commit1)} → ${html_escape(commit2)}</div>`;
+
+    var idx = 0;
+
+    var changed_render = render_netdiff_items(
+        "Changed nets",
+        result.changed,
+        idx,
+        (item) => item.net_name,
+        (item) => netdiff_refs_for_entry(item)
+    );
+    html += changed_render.html;
+    idx = changed_render.next_index;
+
+    var renamed_render = render_netdiff_items(
+        "Renamed nets",
+        result.renamed,
+        idx,
+        (item) => item.net_name_a + " → " + item.net_name_b,
+        (item) => netdiff_refs_for_entry(item)
+    );
+    html += renamed_render.html;
+    idx = renamed_render.next_index;
+
+    var only_a_render = render_netdiff_items(
+        "Only in older commit",
+        result.only_a,
+        idx,
+        (item) => item.net_name,
+        (item) => netdiff_refs_for_entry(item)
+    );
+    html += only_a_render.html;
+    idx = only_a_render.next_index;
+
+    var only_b_render = render_netdiff_items(
+        "Only in newer commit",
+        result.only_b,
+        idx,
+        (item) => item.net_name,
+        (item) => netdiff_refs_for_entry(item)
+    );
+    html += only_b_render.html;
+
+    if (idx === 0) {
+        panel.innerHTML = '<small class="text-success">No logical netlist changes between selected commits.</small>';
+        return;
+    }
+
+    panel.innerHTML = html;
+}
+
+function page_for_ref(ref, preferred_snapshot, fallback_snapshot) {
+    if (!ref) {
+        return null;
+    }
+
+    if (preferred_snapshot && preferred_snapshot.refs && preferred_snapshot.refs[ref]) {
+        return preferred_snapshot.refs[ref].page;
+    }
+
+    if (fallback_snapshot && fallback_snapshot.refs && fallback_snapshot.refs[ref]) {
+        return fallback_snapshot.refs[ref].page;
+    }
+
+    return null;
+}
+
+function highlight_page_label(page_id) {
+    if (!page_id) {
+        return;
+    }
+
+    var label = document.getElementById("label-" + page_id);
+    if (!label) {
+        return;
+    }
+
+    label.classList.remove("page-highlight-pulse");
+    void label.offsetWidth;
+    label.classList.add("page-highlight-pulse");
+
+    setTimeout(function() {
+        label.classList.remove("page-highlight-pulse");
+    }, 1600);
+}
+
+function activate_netdiff_entry(entry_index) {
+    if (netdiff_active_entry_index >= 0) {
+        var old_item = document.getElementById("netdiff-item-" + netdiff_active_entry_index);
+        if (old_item) {
+            old_item.classList.remove("netdiff-item-active");
+        }
+    }
+
+    var new_item = document.getElementById("netdiff-item-" + entry_index);
+    if (new_item) {
+        new_item.classList.add("netdiff-item-active");
+    }
+
+    netdiff_active_entry_index = entry_index;
+}
+
+function focus_netdiff_entry(entry_index) {
+    var entry = netdiff_current_entries[entry_index];
+    if (!entry) {
+        return;
+    }
+
+    activate_netdiff_entry(entry_index);
+
+    if (!document.getElementById("show_sch").checked) {
+        show_sch();
+    }
+
+    var refs = netdiff_refs_for_entry(entry);
+    var ref = refs.length ? refs[0] : null;
+
+    var preferred_snapshot = netdiff_commit2_snapshot;
+    var fallback_snapshot = netdiff_commit1_snapshot;
+
+    if (entry.type === "only_a") {
+        preferred_snapshot = netdiff_commit1_snapshot;
+        fallback_snapshot = netdiff_commit2_snapshot;
+    }
+
+    var page_id = page_for_ref(ref, preferred_snapshot, fallback_snapshot);
+
+    if (page_id) {
+        var pages = $("#pages_list input:radio[name='pages']");
+        for (var i = 0; i < pages.length; i++) {
+            if (pages[i].id === page_id) {
+                pages[i].checked = true;
+                break;
+            }
+        }
+        update_page();
+        highlight_page_label(page_id);
+    }
+
+    var focus = document.getElementById("netdiff_focus");
+    if (focus) {
+        var name;
+        if (entry.type === "renamed") {
+            name = entry.net_name_a + " → " + entry.net_name_b;
+        }
+        else {
+            name = entry.net_name;
+        }
+
+        var location_text = page_id ? ("Page: " + page_id) : "Page: not resolved";
+        var refs_text = refs.length ? refs.join(", ") : "(none)";
+
+        focus.innerHTML = `
+            <div><strong>${html_escape(name)}</strong></div>
+            <div>${html_escape(location_text)}</div>
+            <div>Refs: ${html_escape(refs_text)}</div>
+        `;
+        focus.style.display = "block";
+    }
 }
 
 function update_page()

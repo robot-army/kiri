@@ -1,0 +1,21 @@
+#!/bin/bash
+# netdiff wrapper script
+# This script integrates netdiff into kiri by providing a convenient command-line interface
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KIRI_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Path to the netdiff submodule
+NETDIFF_SCRIPT="${KIRI_ROOT}/submodules/netdiff/netdiff.py"
+
+# Check if netdiff.py exists
+if [[ ! -f "${NETDIFF_SCRIPT}" ]]; then
+    echo "Error: netdiff.py not found at ${NETDIFF_SCRIPT}"
+    echo "Please ensure the netdiff submodule is properly initialized with:"
+    echo "  git submodule update --init --recursive"
+    exit 1
+fi
+
+# Execute netdiff.py with all passed arguments
+python3 "${NETDIFF_SCRIPT}" "$@"

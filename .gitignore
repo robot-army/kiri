@@ -1,1 +1,5 @@
 .kiri
+venv/
+__pycache__/
+bin/__pycache__/
+tests/netdiff_integration/baseline_logs/*.log

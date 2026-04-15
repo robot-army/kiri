@@ -43,7 +43,7 @@
 					</div>
 				</div>
 
-				<div class="col align-self-start justify-content-start col-7 no-gutters" style="background-color: #333; padding: 0px 0px 0px 0px; margin: 0px; height: 90vh;">
+				<div class="col align-self-start justify-content-start col-6 no-gutters" style="background-color: #333; padding: 0px 0px 0px 0px; margin: 0px; height: 90vh;">
 
 					<div class="row no-gutters" style="width: 100%; padding: 0px 0px 0px 0px; margin: 0px;">
 
@@ -134,7 +134,7 @@
 
 				</div>
 
-				<div class="col align-self-start justify-content-start col-1 no-gutters" style="width: 100%; padding: 0px 0px 0px 0px; margin: 0px; height: 100vh;" >
+				<div class="col align-self-start justify-content-start col-2 no-gutters" style="width: 100%; padding: 0px 0px 0px 0px; margin: 0px; height: 100vh;" >
 
 					<div class="list-group no-gutters" id="pages_list" style="display: inline;">
 						<div class="form-check no-gutters" style="width: 180px; padding-top: 1em">
@@ -167,6 +167,23 @@
 											<!-- FILL_LAYERS_HERE -->
 										</form>
 									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<div class="list-group no-gutters" id="netdiff_list_panel" style="display: inline; margin-top: 0.75em; width: 300px;">
+						<div class="form-check no-gutters" style="width: 300px; padding-top: 0.25em;">
+							<p class="text-light" style="margin-bottom: 0.5em;">
+								<span style="margin-right:0.5em; width: 18px; height: 18px;" class="iconify" data-icon="mdi:lan-connect" data-inline="false"></span>
+								Netlist Diff
+							</p>
+
+							<div id="netdiff_focus" class="rounded text-light" style="display: none;"></div>
+
+							<div id="netdiff_list" class="scrollbox" style="height: 28vh; width: 100%; padding: 0px 0px 8px 0px; margin: 0px; overflow-y: scroll;">
+								<div id="netdiff_list_content" class="overflow-auto scrollbox-content">
+									<small class="text-muted">Select two commits to load netlist diff.</small>
 								</div>
 							</div>
 						</div>
