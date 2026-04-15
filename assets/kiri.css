@@ -389,6 +389,20 @@ a:active {
 	margin-top: 2px;
 }
 
+.netdiff-added {
+	color: #49d17d;
+	font-weight: 600;
+}
+
+.netdiff-removed {
+	color: #ff7b7b;
+	font-weight: 600;
+}
+
+.netdiff-unchanged {
+	color: #a8a8a8;
+}
+
 .page-highlight-pulse {
 	animation: page-highlight-pulse 1.4s ease-in-out 1;
 	border: 1px solid #28a745 !important;

@@ -43,6 +43,7 @@ def _extract_symbol_info(symbol_node):
 
     ref = None
     value = ""
+    lib_id = ""
     symbol_at = None
     ref_at = None
 
@@ -54,6 +55,9 @@ def _extract_symbol_info(symbol_node):
 
         if child_name == "at":
             symbol_at = _parse_at_node(child)
+
+        if child_name == "lib_id" and len(child) > 1:
+            lib_id = _to_string(child[1]).strip('"')
 
         if child_name == "property" and len(child) > 2:
             prop_name = _to_string(child[1])
@@ -75,9 +79,61 @@ def _extract_symbol_info(symbol_node):
 
     return {
         "ref": ref,
+        "lib_id": lib_id,
         "value": value,
         "at": ref_at or symbol_at,
     }
+
+
+def _collect_pin_names(node, pin_map):
+    if not isinstance(node, list) or not node:
+        return
+
+    if _symbol_name(node[0]) == "pin":
+        pin_name = ""
+        pin_number = ""
+
+        for child in node:
+            if not isinstance(child, list) or not child:
+                continue
+
+            child_name = _symbol_name(child[0])
+            if child_name == "name" and len(child) > 1:
+                pin_name = _to_string(child[1]).strip('"')
+            if child_name == "number" and len(child) > 1:
+                pin_number = _to_string(child[1]).strip('"')
+
+        if pin_number:
+            pin_map[pin_number] = pin_name or pin_number
+
+    for child in node:
+        if isinstance(child, list):
+            _collect_pin_names(child, pin_map)
+
+
+def _extract_lib_symbol_pin_maps(sch_data):
+    pin_maps = {}
+
+    for node in sch_data:
+        if not isinstance(node, list) or not node:
+            continue
+
+        if _symbol_name(node[0]) != "lib_symbols":
+            continue
+
+        for child in node[1:]:
+            if not isinstance(child, list) or len(child) < 2:
+                continue
+            if _symbol_name(child[0]) != "symbol":
+                continue
+
+            lib_symbol_name = _to_string(child[1]).strip('"')
+            pin_map = {}
+            _collect_pin_names(child, pin_map)
+            if lib_symbol_name:
+                pin_maps[lib_symbol_name] = pin_map
+
+    return pin_maps
 
 
 def _extract_refs_from_schematic(schematic_path, page_id, relpath):
@@ -85,6 +141,8 @@ def _extract_refs_from_schematic(schematic_path, page_id, relpath):
 
     with open(schematic_path, "r", encoding="utf-8") as f:
         sch_data = sexpdata.load(f)
+
+    lib_symbol_pin_maps = _extract_lib_symbol_pin_maps(sch_data)
 
     for node in sch_data:
         info = _extract_symbol_info(node)
@@ -94,6 +152,8 @@ def _extract_refs_from_schematic(schematic_path, page_id, relpath):
         refs[info["ref"]] = {
             "page": page_id,
             "schematic": relpath,
+            "lib_id": info["lib_id"],
+            "pins": lib_symbol_pin_maps.get(info["lib_id"], {}),
             "value": info["value"],
             "at": info["at"],
         }
@@ -160,13 +220,33 @@ def _load_netdiff_module(kiri_root):
     return module
 
 
-def _jsonable_nets(nets):
+def _jsonable_nets(nets, refs):
     output = {}
     for net_name, members in nets.items():
-        output[str(net_name)] = [
-            {"ref": str(ref), "pin": str(pin)}
-            for ref, pin in members
-        ]
+        json_members = []
+        for ref, pin in members:
+            ref_key = str(ref)
+            pin_key = str(pin)
+            ref_info = refs.get(ref_key, {})
+            pins = ref_info.get("pins") or {}
+
+            member = {"ref": ref_key, "pin": pin_key}
+
+            pin_name = pins.get(pin_key)
+            if pin_name:
+                member["pin_name"] = pin_name
+
+            page = ref_info.get("page")
+            if page:
+                member["page"] = page
+
+            schematic = ref_info.get("schematic")
+            if schematic:
+                member["schematic"] = schematic
+
+            json_members.append(member)
+
+        output[str(net_name)] = json_members
     return output
 
 
@@ -245,12 +325,12 @@ def _main():
     os.makedirs(os.path.dirname(output_json), exist_ok=True)
 
     snapshot = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "main_schematic": os.path.relpath(main_schematic, commit_dir),
         "net_count": len(nets),
         "ref_count": len(refs),
-        "nets": _jsonable_nets(nets),
+        "nets": _jsonable_nets(nets, refs),
         "refs": refs,
     }
 

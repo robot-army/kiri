@@ -710,6 +710,205 @@ function refs_from_members(members) {
     return refs;
 }
 
+function member_key(member) {
+    if (!member) {
+        return "";
+    }
+
+    var ref = member.ref || "";
+    var pin = member.pin || "";
+    return ref + "::" + pin;
+}
+
+function member_delta(members_a, members_b) {
+    var left = Array.isArray(members_a) ? members_a : [];
+    var right = Array.isArray(members_b) ? members_b : [];
+
+    var set_a = new Set(left.map(member_key));
+    var set_b = new Set(right.map(member_key));
+
+    var removed = [];
+    for (const member of left) {
+        if (!set_b.has(member_key(member))) {
+            removed.push(member);
+        }
+    }
+
+    var added = [];
+    for (const member of right) {
+        if (!set_a.has(member_key(member))) {
+            added.push(member);
+        }
+    }
+
+    var unchanged_count = left.length - removed.length;
+
+    return {
+        added: added,
+        removed: removed,
+        unchanged_count: unchanged_count
+    };
+}
+
+function format_member(member) {
+    if (!member) {
+        return "";
+    }
+
+    var ref = member.ref || "?";
+    var pin = member.pin_name || member.pin || "?";
+    return ref + "-" + pin;
+}
+
+function page_for_member(member, preferred_snapshot, fallback_snapshot) {
+    if (!member) {
+        return null;
+    }
+
+    if (member.page) {
+        return member.page;
+    }
+
+    return page_for_ref(member.ref, preferred_snapshot, fallback_snapshot);
+}
+
+function pages_from_members(members, preferred_snapshot, fallback_snapshot) {
+    if (!Array.isArray(members)) {
+        return [];
+    }
+
+    var pages = [];
+    for (const member of members) {
+        var page = page_for_member(member, preferred_snapshot, fallback_snapshot);
+        if (page && !pages.includes(page)) {
+            pages.push(page);
+        }
+    }
+
+    return pages.sort();
+}
+
+function all_members_for_entry(entry) {
+    var members = [];
+
+    var members_b = entry && entry.members_b ? entry.members_b : [];
+    for (const member of members_b) {
+        members.push(member);
+    }
+
+    var members_a = entry && entry.members_a ? entry.members_a : [];
+    for (const member of members_a) {
+        members.push(member);
+    }
+
+    return members;
+}
+
+function changed_members_for_entry(entry) {
+    var members = [];
+
+    var removed = entry && entry.removed_members ? entry.removed_members : [];
+    for (const member of removed) {
+        members.push(member);
+    }
+
+    var added = entry && entry.added_members ? entry.added_members : [];
+    for (const member of added) {
+        members.push(member);
+    }
+
+    return members;
+}
+
+function net_pages_for_entry(entry, preferred_snapshot, fallback_snapshot) {
+    return pages_from_members(all_members_for_entry(entry), preferred_snapshot, fallback_snapshot);
+}
+
+function changed_pages_for_entry(entry, preferred_snapshot, fallback_snapshot) {
+    if (!entry || entry.type !== "changed") {
+        return [];
+    }
+
+    return pages_from_members(changed_members_for_entry(entry), preferred_snapshot, fallback_snapshot);
+}
+
+function primary_page_for_entry(entry, preferred_snapshot, fallback_snapshot) {
+    var changed_pages = changed_pages_for_entry(entry, preferred_snapshot, fallback_snapshot);
+    if (changed_pages.length) {
+        return changed_pages[0];
+    }
+
+    var net_pages = net_pages_for_entry(entry, preferred_snapshot, fallback_snapshot);
+    if (net_pages.length) {
+        return net_pages[0];
+    }
+
+    var refs = netdiff_refs_for_entry(entry);
+    return refs.length ? page_for_ref(refs[0], preferred_snapshot, fallback_snapshot) : null;
+}
+
+function format_page_list(pages, max_count) {
+    var list = Array.isArray(pages) ? pages : [];
+    if (!list.length) {
+        return "(none)";
+    }
+
+    var limit = max_count || 4;
+    var visible = list.slice(0, limit);
+    var hidden = list.length - visible.length;
+    var text = visible.join(", ");
+    if (hidden > 0) {
+        text += ` +${hidden}`;
+    }
+    return text;
+}
+
+function member_delta_summary(entry) {
+    var added_count = (entry && entry.added_members) ? entry.added_members.length : 0;
+    var removed_count = (entry && entry.removed_members) ? entry.removed_members.length : 0;
+    var unchanged_count = (entry && Number.isInteger(entry.unchanged_member_count)) ? entry.unchanged_member_count : 0;
+
+    return `<span class="netdiff-added">+${added_count}</span> <span class="netdiff-removed">-${removed_count}</span> <span class="netdiff-unchanged">=${unchanged_count}</span>`;
+}
+
+function member_delta_preview(entry, max_count) {
+    var limit = max_count || 4;
+    var parts = [];
+
+    var removed = (entry && entry.removed_members) ? entry.removed_members : [];
+    for (const member of removed.slice(0, limit)) {
+        parts.push(`<span class="netdiff-removed">-${html_escape(format_member(member))}</span>`);
+    }
+
+    var remaining = Math.max(0, limit - removed.length);
+    var added = (entry && entry.added_members) ? entry.added_members : [];
+    for (const member of added.slice(0, remaining)) {
+        parts.push(`<span class="netdiff-added">+${html_escape(format_member(member))}</span>`);
+    }
+
+    var hidden = removed.length + added.length - Math.min(removed.length, limit) - Math.min(added.length, remaining);
+    if (hidden > 0) {
+        parts.push(`<span class="netdiff-unchanged">+${hidden} more</span>`);
+    }
+
+    if (!parts.length) {
+        parts.push('<span class="netdiff-unchanged">no pin-level delta</span>');
+    }
+
+    return parts.join(" ");
+}
+
+function changed_net_metadata(entry) {
+    var changed_pages = changed_pages_for_entry(entry, netdiff_commit2_snapshot, netdiff_commit1_snapshot);
+    var net_pages = net_pages_for_entry(entry, netdiff_commit2_snapshot, netdiff_commit1_snapshot);
+
+    return [
+        `${member_delta_summary(entry)} · <span class="netdiff-unchanged">changed on ${html_escape(format_page_list(changed_pages, 2))}</span>`,
+        member_delta_preview(entry, 4),
+        `<span class="netdiff-unchanged">net spans ${net_pages.length} page${net_pages.length === 1 ? "" : "s"}</span>`
+    ].join("<br>");
+}
+
 function compare_netdiff_snapshots(snapshot_a, snapshot_b) {
     var nets_a = (snapshot_a && snapshot_a.nets) ? snapshot_a.nets : {};
     var nets_b = (snapshot_b && snapshot_b.nets) ? snapshot_b.nets : {};
@@ -726,11 +925,15 @@ function compare_netdiff_snapshots(snapshot_a, snapshot_b) {
     var changed = [];
     for (const net_name of both) {
         if (!member_sets_equal(nets_a[net_name], nets_b[net_name])) {
+            var delta = member_delta(nets_a[net_name], nets_b[net_name]);
             changed.push({
                 type: "changed",
                 net_name: net_name,
                 members_a: nets_a[net_name],
                 members_b: nets_b[net_name],
+                added_members: delta.added,
+                removed_members: delta.removed,
+                unchanged_member_count: delta.unchanged_count,
                 refs_a: refs_from_members(nets_a[net_name]),
                 refs_b: refs_from_members(nets_b[net_name])
             });
@@ -840,7 +1043,7 @@ function html_escape(text) {
         .replaceAll("'", "&#39;");
 }
 
-function render_netdiff_items(group_title, items, start_index, name_builder, refs_builder) {
+function render_netdiff_items(group_title, items, start_index, name_builder, refs_builder, metadata_builder) {
     if (!items || items.length === 0) {
         return { html: "", next_index: start_index };
     }
@@ -850,14 +1053,21 @@ function render_netdiff_items(group_title, items, start_index, name_builder, ref
 
     var index = start_index;
     for (const item of items) {
-        var refs = refs_builder(item);
-        var refs_preview = refs.length ? refs.slice(0, 5).join(", ") : "(no refs)";
-        var refs_suffix = refs.length > 5 ? ` +${refs.length - 5}` : "";
+        var metadata;
+        if (metadata_builder) {
+            metadata = metadata_builder(item);
+        }
+        else {
+            var refs = refs_builder(item);
+            var refs_preview = refs.length ? refs.slice(0, 5).join(", ") : "(no refs)";
+            var refs_suffix = refs.length > 5 ? ` +${refs.length - 5}` : "";
+            metadata = html_escape(refs_preview + refs_suffix);
+        }
 
         html += `
             <button id="netdiff-item-${index}" type="button" class="netdiff-item" onclick="focus_netdiff_entry(${index})">
                 <div>${html_escape(name_builder(item))}</div>
-                <div class="netdiff-metadata">${html_escape(refs_preview + refs_suffix)}</div>
+                <div class="netdiff-metadata">${metadata}</div>
             </button>
         `;
 
@@ -913,7 +1123,8 @@ function update_netdiff_panel() {
         result.changed,
         idx,
         (item) => item.net_name,
-        (item) => netdiff_refs_for_entry(item)
+        (item) => netdiff_refs_for_entry(item),
+        (item) => changed_net_metadata(item)
     );
     html += changed_render.html;
     idx = changed_render.next_index;
@@ -1019,7 +1230,6 @@ function focus_netdiff_entry(entry_index) {
     }
 
     var refs = netdiff_refs_for_entry(entry);
-    var ref = refs.length ? refs[0] : null;
 
     var preferred_snapshot = netdiff_commit2_snapshot;
     var fallback_snapshot = netdiff_commit1_snapshot;
@@ -1029,7 +1239,9 @@ function focus_netdiff_entry(entry_index) {
         fallback_snapshot = netdiff_commit2_snapshot;
     }
 
-    var page_id = page_for_ref(ref, preferred_snapshot, fallback_snapshot);
+    var page_id = primary_page_for_entry(entry, preferred_snapshot, fallback_snapshot);
+    var changed_pages = changed_pages_for_entry(entry, preferred_snapshot, fallback_snapshot);
+    var net_pages = net_pages_for_entry(entry, preferred_snapshot, fallback_snapshot);
 
     if (page_id) {
         var pages = $("#pages_list input:radio[name='pages']");
@@ -1053,12 +1265,30 @@ function focus_netdiff_entry(entry_index) {
             name = entry.net_name;
         }
 
-        var location_text = page_id ? ("Page: " + page_id) : "Page: not resolved";
+        var location_text = page_id ? ("Jumped to: " + page_id) : "Jumped to: not resolved";
         var refs_text = refs.length ? refs.join(", ") : "(none)";
+
+        var delta_details = "";
+        if (entry.type === "changed") {
+            var removed = (entry.removed_members || []).slice(0, 12).map((m) => `<span class="netdiff-removed">-${html_escape(format_member(m))}</span>`).join(", ");
+            var added = (entry.added_members || []).slice(0, 12).map((m) => `<span class="netdiff-added">+${html_escape(format_member(m))}</span>`).join(", ");
+
+            var removed_more = (entry.removed_members || []).length - Math.min((entry.removed_members || []).length, 12);
+            var added_more = (entry.added_members || []).length - Math.min((entry.added_members || []).length, 12);
+
+            delta_details = `
+                <div>Pin delta: ${member_delta_summary(entry)}</div>
+                <div>${removed || '<span class="netdiff-unchanged">No removed pins</span>'}${removed_more > 0 ? ` <span class="netdiff-unchanged">(+${removed_more} more)</span>` : ""}</div>
+                <div>${added || '<span class="netdiff-unchanged">No added pins</span>'}${added_more > 0 ? ` <span class="netdiff-unchanged">(+${added_more} more)</span>` : ""}</div>
+                <div>Changed pages: ${html_escape(format_page_list(changed_pages, 6))}</div>
+            `;
+        }
 
         focus.innerHTML = `
             <div><strong>${html_escape(name)}</strong></div>
             <div>${html_escape(location_text)}</div>
+            <div>Net spans: ${html_escape(format_page_list(net_pages, 8))}</div>
+            ${delta_details}
             <div>Refs: ${html_escape(refs_text)}</div>
         `;
         focus.style.display = "block";
