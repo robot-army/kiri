@@ -36,7 +36,8 @@ var netdiff_commit2_snapshot = null;
 var netdiff_sheet_rename_badges = {};
 
 var NETDIFF_COMMIT1_COLOR = '#00FFFF';
-var NETDIFF_COMMIT2_COLOR = '#FF7070';
+var NETDIFF_COMMIT2_COLOR = '#880808';
+var NETDIFF_MIN_SHEET_RENAME_GROUP = 2;
 
 var is_fullscreen = false;
 
@@ -955,6 +956,11 @@ function detect_sheet_renames(renamed_items) {
     for (const group_key of Object.keys(groups)) {
         var group = groups[group_key];
         var items = group.items;
+
+        if (!items || items.length < NETDIFF_MIN_SHEET_RENAME_GROUP) {
+            non_sheet = non_sheet.concat(items || []);
+            continue;
+        }
 
         var all_refs_a = [];
         var all_refs_b = [];
