@@ -11,6 +11,14 @@ on:
         description: "Fixture git ref"
         required: false
         default: "main"
+      fixture_old_commit:
+        description: "Optional older commit hash to compare (empty = HEAD~1)"
+        required: false
+        default: ""
+      fixture_new_commit:
+        description: "Optional newer commit hash to compare (empty = HEAD)"
+        required: false
+        default: ""
 
 jobs:
   kicad-e2e:
@@ -28,16 +36,22 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install sexpdata
           sudo apt-get update
           sudo apt-get install -y kicad
+          npx -y playwright@1.53.2 install --with-deps chromium
 
       - name: Clone fixture project
         run: |
-          git clone --depth 1 --branch "${{ github.event.inputs.fixture_ref }}" "${{ github.event.inputs.fixture_repo }}" /tmp/kiri-fixture
+          git clone --branch "${{ github.event.inputs.fixture_ref }}" "${{ github.event.inputs.fixture_repo }}" /tmp/kiri-fixture
           cd /tmp/kiri-fixture
           git rev-parse HEAD
 
@@ -45,8 +59,15 @@ jobs:
         id: commits
         run: |
           cd /tmp/kiri-fixture
-          NEWEST=$(git rev-parse --short HEAD)
-          OLDEST=$(git rev-parse --short HEAD~1)
+
+          if [[ -n "${{ github.event.inputs.fixture_old_commit }}" ]] && [[ -n "${{ github.event.inputs.fixture_new_commit }}" ]]; then
+            OLDEST=$(git rev-parse --short "${{ github.event.inputs.fixture_old_commit }}")
+            NEWEST=$(git rev-parse --short "${{ github.event.inputs.fixture_new_commit }}")
+          else
+            NEWEST=$(git rev-parse --short HEAD)
+            OLDEST=$(git rev-parse --short HEAD~1)
+          fi
+
           echo "newest=$NEWEST" >> "$GITHUB_OUTPUT"
           echo "oldest=$OLDEST" >> "$GITHUB_OUTPUT"
 
@@ -69,9 +90,26 @@ jobs:
           grep "${{ steps.commits.outputs.oldest }}" commits.html
           grep "${{ steps.commits.outputs.newest }}" commits.html
 
+      - name: Capture rendered page screenshot
+        run: |
+          cd /tmp/kiri-fixture/.kiri-ci
+          ./kiri-server -S -p 8877 . > /tmp/kiri-server-e2e.log 2>&1 &
+          SERVER_PID=$!
+          sleep 4
+          npx -y playwright@1.53.2 screenshot --device="Desktop Chrome" --wait-for-timeout=4000 http://127.0.0.1:8877/web/index.html web/kiri-e2e-screenshot.png
+          kill "$SERVER_PID" || true
+          test -f web/kiri-e2e-screenshot.png
+
       - name: Upload E2E output artifact
         uses: actions/upload-artifact@v4
         with:
           name: kiri-e2e-output
           path: /tmp/kiri-fixture/.kiri-ci
+          retention-days: 7
+
+      - name: Upload KiRI server log
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiri-e2e-server-log
+          path: /tmp/kiri-server-e2e.log
           retention-days: 7
