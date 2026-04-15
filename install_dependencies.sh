@@ -100,6 +100,7 @@ linux_install_software_with_apt()
 	sudo apt-get install -y imagemagick
 	sudo apt-get install -y xdotool
 	sudo apt-get install -y rename # perl rename and not util-linux
+	sudo apt-get install -y dos2unix
 }
 
 # =============================================
@@ -129,6 +130,7 @@ linux_install_software_with_dnf()
 	sudo dnf install -y ImageMagick
 	sudo dnf install -y xdotool
 	sudo dnf install -y prename # perl rename and not util-linux
+	sudo dnf install -y dos2unix
 }
 
 # =============================================
@@ -153,6 +155,7 @@ linux_install_software_with_pacman()
 	yes | sudo pacman -S imagemagick --needed
 	yes | sudo pacman -S xdotool --needed
 	yes | sudo pacman -S perl-rename --needed
+	yes | sudo pacman -S dos2unix --needed
 }
 
 # =============================================
