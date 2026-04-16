@@ -1,11 +1,11 @@
 # KiCad Revision Inspector (KiRI)
 
-KiRI started as a script to experiment having a visual diff tool for KiCad projects including schematics and layouts.
-After some time, it became an interesting and it is still being updated.
+KiRI started as an experiment for visual diffs of KiCad projects (schematics and PCB layouts).
+It has since grown into a practical review tool for commit-to-commit hardware changes.
 
-Currently, KiRi supports KiCad >= 5.
+Currently, KiRI supports KiCad >= 5.
 
-Internally it uses existing tools to generate svg images of schematics and layouts to be compared.
+Internally, it uses existing tools to generate SVGs for side-by-side and overlay comparison.
 
 In this way, when exporting schematics, if:
 
@@ -13,9 +13,19 @@ In this way, when exporting schematics, if:
 - KiCad 6 is installed (which does not have `kicad-cli` available), schematics are exported using [xdotool](https://github.com/jordansissel/xdotool) on Linux/Windows and [cliclick](https://github.com/BlueM/cliclick) on macOS, using the GUI. This method is far from the ideal and it is not recommended.
 - KiCad 5 is installed or if the projects is based on KiCad 5, [plotkicadsch/plotgitsch](https://github.com/jnavila/plotkicadsch) are used to export the schematics.
 
-However, when exporting the layout layers:
+When exporting layout layers:
 
-- [Kicad-Diff](https://github.com/Gasman2014/KiCad-Diff) is used for all supported KiCad versions using `pcbnew` library available in python. It is also possible to use `kicad-cli` to export the layout layers however this process is slower than using Kicad-Diff since the other exports all the layers at once and `kicad-cli` can only do one layer at a time.
+- [Kicad-Diff](https://github.com/Gasman2014/KiCad-Diff) is used for all supported KiCad versions using the Python `pcbnew` library. It is also possible to use `kicad-cli`, but that is typically slower because it exports one layer at a time.
+
+## Netlist Diff panel (logical changes)
+
+KiRI includes a **Netlist Diff** panel that complements visual SVG diffs with logical connectivity changes:
+
+- Changed nets with pin-level deltas (`+added`, `-removed`, unchanged count)
+- Renamed nets
+- Inferred **sheet renames** (collapses bulk per-net renames into one entry)
+- Only-in-older / only-in-newer net groups
+- Click-to-focus navigation to the affected page
 
 
 ## KiRI Installation
@@ -32,6 +42,14 @@ kiri [OPTIONS] [KICAD_PROJECT_FILE]
 ```
 
 `KICAD_PROJECT_FILE` can be passed, but it can also be omitted. If running from inside the project's repository, it will use the `.pro` or `.kicad_pro` available. If both are present (which is not good), it will ask your choice. The same happens is running outside of the repository without passing the `KICAD_PROJECT_FILE`.
+
+Typical usage for a commit range:
+
+```bash
+kiri your-project.kicad_pro -g <older_commit>..<newer_commit> -l -r -d .kiri-test
+cd .kiri-test
+kiri-server --port 8877 .
+```
 
 
 ## Command line options (aka Help)
@@ -59,6 +77,19 @@ Run fast tests locally:
 ```bash
 python tests/netdiff_integration/test_netdiff_integration.py
 python tests/netdiff_integration/test_netdiff_sheet_rename.py
+```
+
+Run a local end-to-end check against a project repo:
+
+```bash
+kiri <project>.kicad_pro -g <older_commit>..<newer_commit> -l -r -d .kiri-test
+```
+
+Then open the generated report:
+
+```bash
+cd .kiri-test
+kiri-server --port 8877 .
 ```
 
 ### Archiving generated files
