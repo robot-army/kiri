@@ -130,7 +130,10 @@ jobs:
           mkdir -p web/e2e-screenshots
 
           cleanup() {
-            kill "$SERVER_PID" || true
+            if [[ -n "${SERVER_PID:-}" ]]; then
+              kill "$SERVER_PID" 2>/dev/null || true
+              wait "$SERVER_PID" 2>/dev/null || true
+            fi
           }
 
           ./kiri-server -S -p 8877 . > /tmp/kiri-server-e2e.log 2>&1 &
