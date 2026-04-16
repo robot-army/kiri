@@ -128,10 +128,19 @@ jobs:
           cd /tmp/kiri-fixture/.kiri-ci
           ./kiri-server -S -p 8877 . > /tmp/kiri-server-e2e.log 2>&1 &
           SERVER_PID=$!
+          SERVER_READY=0
           for i in {1..30}; do
-            curl -sf http://127.0.0.1:8877/web/index.html > /dev/null 2>&1 && break
+            if curl -sf http://127.0.0.1:8877/web/index.html > /dev/null 2>&1; then
+              SERVER_READY=1
+              break
+            fi
             sleep 1
           done
+          if [[ "$SERVER_READY" -ne 1 ]]; then
+            echo "kiri-server did not become ready within 30 seconds" >&2
+            cat /tmp/kiri-server-e2e.log >&2
+            exit 1
+          fi
           "$GITHUB_WORKSPACE/node_modules/.bin/playwright" screenshot \
             --device="Desktop Chrome" \
             --wait-for-timeout=4000 \
