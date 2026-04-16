@@ -132,7 +132,12 @@ jobs:
           cleanup() {
             if [[ -n "${SERVER_PID:-}" ]]; then
               kill "$SERVER_PID" 2>/dev/null || true
-              wait "$SERVER_PID" 2>/dev/null || true
+              for _ in {1..10}; do
+                if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+                  break
+                fi
+                sleep 0.5
+              done
             fi
           }
 
