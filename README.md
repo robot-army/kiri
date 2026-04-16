@@ -3,13 +3,19 @@
 KiRI started as an experiment for visual diffs of KiCad projects (schematics and PCB layouts).
 It has since grown into a practical review tool for commit-to-commit hardware changes.
 
-Currently, KiRI supports KiCad >= 5.
+KiRI has compatibility paths for KiCad 5 through 9+, but the project is currently CI-tested on KiCad 9.
+
+## Compatibility (current state)
+
+- **Best-supported / CI-tested:** KiCad 9
+- **Likely works:** KiCad 7-8 (uses `kicad-cli` for schematic SVG export)
+- **Legacy paths still present:** KiCad 5-6 (GUI/plotgitsch fallback paths), but less tested
 
 Internally, it uses existing tools to generate SVGs for side-by-side and overlay comparison.
 
-In this way, when exporting schematics, if:
+When exporting schematics:
 
-- KiCad >= 7 is installed, the `kicad-cli` is used.
+- If `kicad-cli` is available, KiRI uses it for schematic SVG export.
 - KiCad 6 is installed (which does not have `kicad-cli` available), schematics are exported using [xdotool](https://github.com/jordansissel/xdotool) on Linux/Windows and [cliclick](https://github.com/BlueM/cliclick) on macOS, using the GUI. This method is far from the ideal and it is not recommended.
 - KiCad 5 is installed or if the projects is based on KiCad 5, [plotkicadsch/plotgitsch](https://github.com/jnavila/plotkicadsch) are used to export the schematics.
 
@@ -26,6 +32,18 @@ KiRI includes a **Netlist Diff** panel that complements visual SVG diffs with lo
 - Inferred **sheet renames** (collapses bulk per-net renames into one entry)
 - Only-in-older / only-in-newer net groups
 - Click-to-focus navigation to the affected page
+
+### Netdiff engine support
+
+KiRI uses `submodules/netdiff` plus `bin/kiri-netdiff-snapshot`.
+
+- **Preferred mode:** `kicad-cli sch export netlist` (highest fidelity)
+- **Fallback mode:** schematic parsing when netlist export is unavailable
+
+Practical implication:
+
+- On KiCad 9, netdiff is generally the most accurate (full netlist export path).
+- On older versions, KiRI still runs netdiff via fallback parsing, but results can be less complete for complex hierarchical/library-resolved connectivity.
 
 
 ## KiRI Installation
@@ -61,7 +79,7 @@ kiri -h
 
 ## Testing and CI
 
-KiRI now includes two CI workflows:
+KiRI now includes three CI workflows:
 
 - Fast CI for every push/PR: [ci-fast.yml](.github/workflows/ci-fast.yml)
     - Python netdiff integration tests
@@ -71,6 +89,11 @@ KiRI now includes two CI workflows:
     - Clones a fixture project
     - Runs KiRI end-to-end
     - Uploads generated artifacts for inspection
+- Manual README screenshot refresh workflow: [readme-screenshots.yml](.github/workflows/readme-screenshots.yml)
+    - Regenerates selected screenshots used in README
+    - Opens a PR with image updates (does not push directly to main)
+
+Both manual workflows use pinned default fixture commits for reproducible output.
 
 Run fast tests locally:
 
