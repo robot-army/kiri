@@ -1,6 +1,11 @@
 name: KiCad E2E (manual)
 
 on:
+  push:
+    branches:
+      - main
+      - "copilot/**"
+  pull_request:
   workflow_dispatch:
     inputs:
       fixture_repo:
@@ -83,7 +88,7 @@ jobs:
 
       - name: Clone fixture project
         run: |
-          git clone --branch "${{ github.event.inputs.fixture_ref }}" "${{ github.event.inputs.fixture_repo }}" /tmp/kiri-fixture
+          git clone --branch "${{ github.event.inputs.fixture_ref || 'main' }}" "${{ github.event.inputs.fixture_repo || 'https://github.com/robot-army/programmable-led-panel.git' }}" /tmp/kiri-fixture
           cd /tmp/kiri-fixture
           git rev-parse HEAD
 
