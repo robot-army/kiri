@@ -1,0 +1,168 @@
+name: Refresh README screenshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixture_repo:
+        description: "Fixture repository URL"
+        required: false
+        default: "https://github.com/robot-army/programmable-led-panel.git"
+      fixture_ref:
+        description: "Fixture git ref"
+        required: false
+        default: "main"
+      fixture_old_commit:
+        description: "Older commit hash to compare (default is pinned for reproducible screenshots)"
+        required: false
+        default: "1222b944"
+      fixture_new_commit:
+        description: "Newer commit hash to compare (default is pinned for reproducible screenshots)"
+        required: false
+        default: "d010632b"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh-readme-screenshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout KiRI
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install sexpdata
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository --yes ppa:kicad/kicad-9.0-releases
+          sudo apt-get update
+          sudo apt-get install -y kicad dos2unix
+          npx -y playwright@1.53.2 install --with-deps chromium
+
+      - name: Clone fixture project
+        run: |
+          git clone --branch "${{ github.event.inputs.fixture_ref }}" "${{ github.event.inputs.fixture_repo }}" /tmp/kiri-fixture
+          cd /tmp/kiri-fixture
+          git rev-parse HEAD
+
+      - name: Resolve comparison commits
+        id: commits
+        run: |
+          cd /tmp/kiri-fixture
+
+          if [[ -n "${{ github.event.inputs.fixture_old_commit }}" ]] && [[ -n "${{ github.event.inputs.fixture_new_commit }}" ]]; then
+            OLDEST=$(git rev-parse --short "${{ github.event.inputs.fixture_old_commit }}")
+            NEWEST=$(git rev-parse --short "${{ github.event.inputs.fixture_new_commit }}")
+          else
+            NEWEST=$(git rev-parse --short HEAD)
+            OLDEST=$(git rev-parse --short HEAD~1)
+          fi
+
+          echo "newest=$NEWEST" >> "$GITHUB_OUTPUT"
+          echo "oldest=$OLDEST" >> "$GITHUB_OUTPUT"
+
+      - name: Run KiRI against fixture
+        run: |
+          cd /tmp/kiri-fixture
+          export TERM=xterm
+          export PATH="$GITHUB_WORKSPACE/bin:$GITHUB_WORKSPACE/submodules/KiCad-Diff/bin:$PATH"
+          export PYTHONPATH="$GITHUB_WORKSPACE:$PYTHONPATH"
+          "$GITHUB_WORKSPACE/bin/kiri" led-panel.kicad_pro -g "${{ steps.commits.outputs.oldest }}..${{ steps.commits.outputs.newest }}" -l -r -k -d .kiri-ci -V
+
+      - name: Capture README screenshots
+        run: |
+          set -euo pipefail
+          cd /tmp/kiri-fixture/.kiri-ci
+
+          cleanup() {
+            kill "$SERVER_PID" || true
+          }
+
+          ./kiri-server -S -p 8877 . > /tmp/kiri-server-readme.log 2>&1 &
+          SERVER_PID=$!
+          trap cleanup EXIT
+          sleep 4
+
+          npx -y -p playwright@1.53.2 node <<'EOF'
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+
+            await page.goto('http://127.0.0.1:8877/web/index.html', { waitUntil: 'networkidle' });
+            await page.waitForTimeout(2500);
+
+            // Schematic diff screenshot
+            await page.locator('#diff-container').screenshot({ path: '/tmp/kiri_sch.png' });
+
+            // PCB diff screenshot
+            await page.locator('#show_pcb_lbl').click();
+            await page.waitForTimeout(2000);
+            await page.locator('#diff-container').screenshot({ path: '/tmp/kiri_pcb.png' });
+
+            // Shortcuts modal screenshot
+            await page.locator('#info-btn').click();
+            await page.waitForTimeout(800);
+            await page.locator('#shortcuts-modal .modal-dialog').screenshot({ path: '/tmp/shortcuts.png' });
+
+            await browser.close();
+          })();
+          EOF
+
+          test -f /tmp/kiri_sch.png
+          test -f /tmp/kiri_pcb.png
+          test -f /tmp/shortcuts.png
+
+      - name: Copy screenshots into repo
+        run: |
+          cp /tmp/kiri_sch.png "$GITHUB_WORKSPACE/misc/kiri_sch.png"
+          cp /tmp/kiri_pcb.png "$GITHUB_WORKSPACE/misc/kiri_pcb.png"
+          cp /tmp/shortcuts.png "$GITHUB_WORKSPACE/misc/shortcuts.png"
+
+      - name: Upload generated screenshots artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: readme-screenshots-generated
+          path: |
+            /tmp/kiri_sch.png
+            /tmp/kiri_pcb.png
+            /tmp/shortcuts.png
+            /tmp/kiri-server-readme.log
+          retention-days: 7
+
+      - name: Create pull request with refreshed screenshots
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "docs: refresh README screenshots from manual workflow"
+          title: "docs: refresh README screenshots"
+          body: |
+            Automated README screenshot refresh.
+
+            Source fixture: `${{ github.event.inputs.fixture_repo }}` @ `${{ github.event.inputs.fixture_ref }}`
+            Compared commits: `${{ steps.commits.outputs.oldest }}`..`${{ steps.commits.outputs.newest }}`
+
+            Triggered by: `${{ github.actor }}`
+          branch: ci/readme-screenshots
+          delete-branch: true
+          add-paths: |
+            misc/kiri_sch.png
+            misc/kiri_pcb.png
+            misc/shortcuts.png
