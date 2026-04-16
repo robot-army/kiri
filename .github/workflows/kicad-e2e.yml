@@ -118,7 +118,8 @@ jobs:
 
           sleep 4
 
-          npx -y -p playwright@1.53.2 node <<'EOF'
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --prefix /tmp/kiri-playwright --no-save playwright@1.53.2
+          NODE_PATH=/tmp/kiri-playwright/node_modules node <<'EOF'
           const { chromium } = require('playwright');
 
           (async () => {
